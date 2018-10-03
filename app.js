@@ -5,10 +5,12 @@ var cookieParser = require('cookie-parser');
 var logger = require('morgan');
 var cheerio = require('cheerio');
 var request = require('async-request');
+var rp = require('request-promise');
 var mongoose = require('mongoose');
+const mongoosePaginate = require('mongoose-paginate');
 
 //connect mongoose db
-mongoose.connect('mongodb://localhost/mangakCrawler');
+mongoose.connect('mongodb://localhost/mangakCrawler', { useNewUrlParser: true });
 var db = mongoose.connection;
 db.on('error', console.error.bind(console, 'Lỗi kết nối csdl:'));
 db.once('open', function() {
@@ -23,6 +25,10 @@ var mangaSchema = mongoose.Schema({
 	category: [],
 	status: String,
 	view: Number,
+  isCrawled: {
+    type: Boolean,
+    default: false
+  },
 	update: String,
   updateISO: Date,
 	cover: String,
@@ -42,16 +48,10 @@ var chapterSchema = mongoose.Schema({
 	}
 });
 
-var listCrawl = mongoose.Schema({
-    url: String,
-    isCrawled: Boolean,
-    update: String,
-    updateISO: Date
-});
+mangaSchema.plugin(mongoosePaginate);
 
 var Manga = mongoose.model('Manga', mangaSchema);
 var Chapter = mongoose.model('Chapter', chapterSchema);
-var ListCrawl = mongoose.model('ListCrawl', listCrawl);
 
 const webdriver = require('selenium-webdriver');
 const chrome = require('selenium-webdriver/chrome');
@@ -202,7 +202,7 @@ app.get('/crawl', async function(req, res) {
 	        });
 	    });
 
-	    Chapter.update({'manga.id': mangaId, title: chapter.title}, {images: images}, function(err) {
+	    Chapter.updateOne({'manga.id': mangaId, title: chapter.title}, {images: images}, function(err) {
 	    	if(!err) {
 	    		console.log("ok: " + chapter.title);
 	    	}
@@ -304,23 +304,113 @@ app.get('/list-manga', async function(req, res) {
     res.send("done");
 });
 
-app.get('/list-crawl', async function(req, res) {
-    let list;
-    try {
-        list = await ListCrawl.find({isCrawled: false}).select('url').limit(1);
-    }
-    catch(e) {
-      console.log(e);
-    }
 
-    for(var i = 0 ; i < list.length ; i++) {
-        await crawlManga(list[i].url);
-    }
-    res.send(list);
+app.get('/fetch-list-manga',async function(req, res) {
+  var url = 'http://www.nettruyen.com/hot?page=1';
+
+  let listMangas = [];
+  let response;
+  try {
+      response = await getRawBody(url);
+  }
+  catch(e) {
+    res.json({error: e});
+  }
+
+  let $ = cheerio.load(response);
+
+  let lastPage = $('.pagination > li:last-child > a:nth-child(1)').attr('href');
+      lastPage = lastPage.slice(lastPage.indexOf('=') + 1, lastPage.length);
+      lastPage = parseInt(lastPage);
+
+  $('div.items .clearfix figcaption h3 a.jtip').each(async function(index) {
+      let href = $(this).attr('href');
+      let title = $(this).text();
+      try {
+          let newManga = new Manga({
+              title: title,
+              link: href
+          });
+
+          await newManga.save();
+      }
+      catch(e) {
+          console.log(e);
+      }
+  });
+
+  for(var i = 2; i < lastPage ; i++) {
+      let link = 'http://www.nettruyen.com/hot?page=' + i;
+      let response;
+      try {
+          response = await getRawBody(link);
+      }
+      catch(e) {
+        res.json({error: e});
+      }
+
+      let $$ = cheerio.load(response);
+
+      let lastPage = $$('.pagination > li:last-child > a:nth-child(1)').attr('href');
+          lastPage = lastPage.slice(lastPage.indexOf('=') + 1, lastPage.length);
+          lastPage = parseInt(lastPage);
+
+      $$('div.items .clearfix figcaption h3 a.jtip').each(async function(index) {
+          let href = $$(this).attr('href');
+          let title = $$(this).text();
+          try {
+            let newManga = new Manga({
+                title: title,
+                link: href
+            });
+
+            await newManga.save();
+          }
+          catch(e) {
+              console.log(e);
+          }
+
+      });
+  }
+  res.send("done");
 });
 
-var crawlManga = async function (mangaLink) {
+app.get('/list-crawl/:number', async function(req, res) {
+    let number = req.params.number || 1;
+        number = parseInt(number);
 
+    console.log(number);
+
+    if(number < 3) {
+      Manga.paginate({}, { page: number, limit: 1, select: 'link' }, async function(err, result) {
+            if(!err) {
+                let url = await result.docs[0].link;
+                console.log(url);
+                await fetchManga(url);
+                try {
+                    //await ListCrawl.updateOne({url: url}, {isCrawled: true});
+                    number = number + 1;
+                    res.redirect('/list-crawl/' + number);
+                }
+                catch(e) {
+                  console.log(e);
+                }
+            }
+            else {
+              console.log(err);
+            }
+      });
+    }
+    else {
+      res.send("qua gioi han");
+    }
+    //res.send(list);
+});
+
+var fetchManga = async function (mangaLink) {
+  console.log("Crawling : " + mangaLink + "...");
+
+  //Bóc tách thông tin
   let $ = cheerio.load(await getRawBody(mangaLink));
   let title = $('.title-detail').text();
   let name = $('h2.other-name').text() || title;
@@ -365,24 +455,28 @@ var crawlManga = async function (mangaLink) {
     let category = $(this).text();
       listCategory.push(category);
   });
+  // !Kết thúc bóc tách thông tin
 
-  let count;
-  try {
-    count = await Manga.count({title: title, link: mangaLink});
-  }
-  catch(e) {
-    console.log(e);
-  }
-
-  if(count == 1) {
     let manga;
     try {
       manga = await Manga.findOne({title: title, link: mangaLink});
+      await Manga.update({title: title, link: mangaLink}, {
+        name: name,
+        author: listAuthor,
+        status: status,
+        update: update,
+        updateISO: updateISO,
+        view: view,
+        cover: cover,
+        category: listCategory,
+        description: description
+      });
     }
     catch(e) {
       console.log(e);
     }
 
+    //Lấy danh sách các Chapters và các thông tin về chapter
     $('#nt_listchapter > nav:nth-child(2) > ul:nth-child(1) > li.row:not(.heading)').each(async function(index) {
       let rowChapter = await $(this).html();
       let $$ = cheerio.load(rowChapter);
@@ -400,28 +494,128 @@ var crawlManga = async function (mangaLink) {
         console.log(e);
       }
 
-      if(chapterCount < 1) {
-        let chapter = new Chapter({
-          link: chapterUrl,
-          title: chapterTitle,
-          number: chapterNumber,
-          update: chapterUpdate,
-          manga: {
-            id: manga._id,
-            title: manga.title
-          }
-        });
-
-        await chapter.save();
-      }
-      console.log("Da luu: " + chapterTitle);
+      await saveChapter(chapterCount, chapterUrl, chapterTitle, chapterNumber,
+                        chapterUpdate, manga._id, manga.title);
     });
 
-    await crawlChapter(manga._id);
-  }
-  else {
+    await crawlChapter(manga._id); //Crawl chapter
 
-    let manga = new Manga({
+}
+
+var crawlManga = async function (mangaLink) {
+  console.log("Crawling : " + mangaLink + "...");
+
+  //Bóc tách thông tin
+  let $ = cheerio.load(await getRawBody(mangaLink));
+  let title = $('.title-detail').text();
+  let name = $('h2.other-name').text() || title;
+  let listAuthor = [];
+
+  $('li.author > p:nth-child(2) a').each(function(index) {
+      let author = $(this).text();
+      listAuthor.push(author);
+  });
+
+  let status = $('.status > p:nth-child(2)').text();
+  let update = $('time.small').text();
+      update = update.slice(update.indexOf("lúc:") + 4, update.length).trim();
+      update = update.replace(']','');
+  let tempUpdate = update;
+  let hour = update.slice(0,tempUpdate.indexOf(':')).trim();
+      hour = parseInt(hour);
+      tempUpdate = tempUpdate.slice(tempUpdate.indexOf(':') + 1, tempUpdate.length);
+  let minute = tempUpdate.slice(0, tempUpdate.indexOf(' '));
+      minute = parseInt(minute);
+
+      tempUpdate = tempUpdate.slice(tempUpdate.indexOf(' '), tempUpdate.length).trim(); //Ket qua duoc ngay thang nam
+      tempUpdate = tempUpdate.split('/');
+  let day = tempUpdate[0];
+      day = parseInt(day);
+  let month = tempUpdate[1];
+      month = parseInt(month);
+  let year = tempUpdate[2];
+      year = parseInt(year);
+  let updateISO = new Date(year, month - 1, day, hour, minute);
+
+  let view = $('.list-info > li:last-child > p:nth-child(2)').text();
+  console.log(view);
+      view = view.replace('.','');
+      view = parseInt(view);
+  let cover = $('div.col-xs-4:nth-child(1) > img:nth-child(1)').attr('src');
+  let description = $('.detail-content > p:nth-child(2)').text();
+
+  let listCategory = [];
+
+  $('.kind > p:nth-child(2) > a').each(function(index) {
+    let category = $(this).text();
+      listCategory.push(category);
+  });
+  // !Kết thúc bóc tách thông tin
+
+  let count;
+  try {
+    count = await Manga.count({title: title, link: mangaLink});
+  }
+  catch(e) {
+    console.log(e);
+  }
+
+  if(count == 1) { // Nếu Manga đã được tạo
+    console.log("Manga da ton tai!");
+    let manga;
+    try {
+      manga = await Manga.findOne({title: title, link: mangaLink});
+    }
+    catch(e) {
+      console.log(e);
+    }
+
+    //Lấy danh sách các Chapters và các thông tin về chapter
+    $('#nt_listchapter > nav:nth-child(2) > ul:nth-child(1) > li.row:not(.heading)').each(async function(index) {
+      let rowChapter = await $(this).html();
+      let $$ = cheerio.load(rowChapter);
+
+      let chapterUrl = $$('a').attr('href');
+      let chapterTitle = $$('a').text();
+      let chapterNumber = chapterTitle.slice(chapterTitle.indexOf("ter ") + 4, chapterTitle.length).trim();
+          chapterNumber = parseFloat(chapterNumber);
+      let chapterUpdate = $$('div:nth-child(2)').text().trim();
+      let chapterCount;
+      try {
+        chapterCount = await Chapter.count({'manga.id': manga._id, number: chapterNumber});
+      }
+      catch(e) {
+        console.log(e);
+      }
+
+      // await saveChapter(chapterCount, chapterUrl, chapterTitle, chapterNumber,
+      //                   chapterUpdate, manga._id, manga.title);
+      if(chapterCount < 1) {
+          let newChapter = new Chapter({
+            link: chapterUrl,
+            title: chapterTitle,
+            number: chapterNumber,
+            update: chapterUpdate,
+            manga: {
+              id: mangaId,
+              title: mangaTitle
+            }
+          });
+
+          newChapter.save(function(e) {
+              if(!e) {
+                console.log("Chapter Saved!");
+              }
+          });
+      }
+
+    });
+
+    await crawlChapter(manga._id); //Crawl chapter
+  }
+  if(count < 1){ //Nếu Manga chưa được tạo
+    console.log("MANGA chua duoc tao! Dang tao moi...");
+    let manga_new = new Manga({
       title: title,
       name: name,
       author: listAuthor,
@@ -437,12 +631,12 @@ var crawlManga = async function (mangaLink) {
 
     let newManga;
     try{
-      newManga = await manga.save();
+      newManga = await manga_new.save();
     }
     catch(e) {
       console.log(e);
     }
-
+    //Lấy danh sách các Chapters và các thông tin về chapter
     $('#nt_listchapter > nav:nth-child(2) > ul:nth-child(1) > li.row:not(.heading)').each(async function(index) {
       let rowChapter = await $(this).html();
       let $$ = cheerio.load(rowChapter);
@@ -460,25 +654,33 @@ var crawlManga = async function (mangaLink) {
         console.log(e);
       }
 
-      if(chapterCount < 1) {
-        let chapter = new Chapter({
-          link: chapterUrl,
-          title: chapterTitle,
-          number: chapterNumber,
-          update: chapterUpdate,
-          manga: {
-            id: newManga._id,
-            title: newManga.title
-          }
-        });
+      await saveChapter(chapterCount, chapterUrl, chapterTitle, chapterNumber,
+                        chapterUpdate, newManga._id, newManga.title);
 
-        await chapter.save();
-      }
-
-      console.log("Da luu: " + chapterTitle);
     });
     await crawlChapter(newManga._id);
+    console.log("Da crawl xong chapter");
   }
+}
+
+var saveChapter = async function(chapterCount, chapterUrl, chapterTitle,
+                chapterNumber, chapterUpdate, mangaId, mangaTitle) {
+
+  if(chapterCount < 1) { //Nếu chapter chưa được tạo thì tạo mới
+    let chapter = new Chapter({
+      link: chapterUrl,
+      title: chapterTitle,
+      number: chapterNumber,
+      update: chapterUpdate,
+      manga: {
+        id: mangaId,
+        title: mangaTitle
+      }
+    });
+
+    await chapter.save();
+  }
+  console.log(chapterTitle + " Saved!");
 }
 
 var crawlChapter = async function(mangaId) {
@@ -505,7 +707,7 @@ var crawlChapter = async function(mangaId) {
     });
 
     try {
-       await Chapter.update({'manga.id': mangaId, title: chapter.title}, {images: images});
+       await Chapter.updateOne({'manga.id': mangaId, title: chapter.title}, {images: images});
        console.log(chapter.title + " updated!");
     }
     catch(e) {
@@ -705,7 +907,7 @@ app.get('/crawl-chapter/:mangaId', async function(req, res) {
     });
 
     try {
-       await Chapter.update({'manga.id': mangaId, title: chapter.title}, {images: images});
+       await Chapter.updateOne({'manga.id': mangaId, title: chapter.title}, {images: images});
        console.log(chapter.title + " updated!");
     }
     catch(e) {
@@ -725,6 +927,10 @@ app.get('/chap', function(req, res) {
                  res.send(chapters);
                }
            })
+});
+
+app.get('/home', function(req, res) {
+    res.render('index');
 });
 
 app.get('/manga', function(req, res) {
