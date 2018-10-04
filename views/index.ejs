@@ -102,7 +102,7 @@
 				<!-- Basic datatable -->
 				<div class="card">
 					<div class="card-header header-elements-inline">
-						<h5 class="card-title">Basic datatable</h5>
+						<h5 class="card-title">Quản Lý Manga</h5>
 						<div class="header-elements">
 							<div class="list-icons">
 		                		<a class="list-icons-item" data-action="collapse"></a>
@@ -113,7 +113,7 @@
 					</div>
 
 					<div class="card-body">
-						The <code>DataTables</code>
+							<button type="button" class="btn btn-info btn-lg" id="update_new_chapter">Cập Nhật Chap Mới Nhất</button>
 					</div>
 
 					<table class="table datatable-basic">
@@ -172,8 +172,6 @@
 
 	</div>
 
-	<button type="button" class="btn btn-info btn-lg" data-toggle="modal" data-target="#myModal">Open Modal</button>
-
   <!-- Modal -->
   <div class="modal fade" id="myModal" role="dialog">
     <div class="modal-dialog">
@@ -185,7 +183,7 @@
 </body>
 
 <script type="text/javascript">
-	
+
 	$('a.update_manga').click(function(e){
 		e.preventDefault();
 		$('#myModal').modal('toggle');
@@ -210,7 +208,22 @@
         	alert(result.result);
         });
         ;
+	});
 
+	$('button#update_new_chapter').click(function(e) {
+		e.preventDefault();
+
+				$.ajax({
+						url: '/update-new-chapter',
+						type: 'GET',
+				}).done(function(ketqua) {
+					console.log(ketqua);
+						alert(ketqua);
+				}).success(function(result) {
+					console.log(result);
+					alert(result);
+				});
+				;
 	});
 
 </script>

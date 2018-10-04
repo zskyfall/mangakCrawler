@@ -20,7 +20,9 @@ db.once('open', function() {
 //MongoDB Schema
 var mangaSchema = mongoose.Schema({
 	title: String,
+  search_title: String,
   name: String,
+  search_name: String,
 	author: [],
 	category: [],
 	status: String,
@@ -381,7 +383,7 @@ app.get('/list-crawl/:number', async function(req, res) {
 
     console.log(number);
 
-    if(number < 41) {
+    if(number < 3) {
       Manga.paginate({}, { page: number, limit: 1, select: 'link' }, async function(err, result) {
             if(!err) {
                 let url = await result.docs[0].link;
@@ -407,21 +409,48 @@ app.get('/list-crawl/:number', async function(req, res) {
     //res.send(list);
 });
 
+app.get('/update-xoa-dau', async function(req, res) {
+    let mangas;
+    try {
+      mangas = await Manga.find({});
+    }
+    catch(e) {
+      console.log(e);
+    }
 
-app.get('/search/:text', function(req, res) {
-    let query = req.params.text;
-    Manga.find({
-        $text: {$search: query}
+    mangas.forEach(function(manga) {
+      let name = manga.name;
+      let title = manga.title;
+      let search_name = xoa_dau(name).toLowerCase();
+      let search_title = xoa_dau(title).toLowerCase();
+
+        Manga.update({_id: manga._id}, {search_name: search_name, search_title: search_title}, function(err) {
+            if(!err) {
+              console.log("updated!");
+            }
+            else {
+              console.log(err);
+            }
+        });
     })
-   .limit(20)
-   .exec(function(err, docs) {
+});
+
+app.post('/search', (req, res) => {
+  var query = req.body.query;
+      query = xoa_dau(query).toLowerCase();
+  Manga.find().or([
+      {search_name: new RegExp(query, "i")},
+      {search_title: new RegExp(query, "i")}
+  ]).exec(function(err, mangas) {
       if(err) {
-        res.json({error: err});
+          console.log(err);
+          res.send({error: err});
       }
       else {
-        res.json(docs);
+          res.send(mangas);
       }
-    });
+  });
+
 });
 
 var updateManga = async function (mangaLink, mangaId) {
@@ -476,7 +505,7 @@ var updateManga = async function (mangaLink, mangaId) {
 
     let manga;
     let number_chapters_of_manga;
-    let count_chapters = 0;
+    let count_empty_chapters = 0;
     try {
       manga = await Manga.findOne({_id: mangaId});
       number_chapters_of_manga = await Chapter.count({'manga.title': title}); //Đếm số chapters của Manga
@@ -519,31 +548,20 @@ var updateManga = async function (mangaLink, mangaId) {
                         chapterUpdate, manga._id, manga.title);
     });
 
-    count_chapters = count_chapters + await fixCrawlChapter(manga._id); //Crawl chapter
-    if(count_chapters == number_chapters_of_manga) {
+    count_empty_chapters = count_empty_chapters + await fixCrawlChapter(manga._id); //Crawl chapter
 
         try {
            await Manga.update({title: title, link: mangaLink}, {crawlStatus: 'done'});
-           crawlResult = "success";
+           crawlResult = "Success";
            console.log("MANGA:"+ title +" DA DUOC CAP NHAT TOAN BO CHAPTER");
         }
         catch (e) {
-            crawlResult = "error";
+          await Manga.update({title: title, link: mangaLink}, {crawlStatus: 'error'});
+          console.log("XAY RA LOI KHI CRAWL CHAPTER CHO : "+ title);
+          crawlResult = "Error";
         }
-    }
-    else {
 
-        try {
-           await Manga.update({title: title, link: mangaLink}, {crawlStatus: 'error'});
-           crawlResult = "lost";
-           console.log("XAY RA LOI KHI CRAWL CHAPTER CHO : "+ title);
-        }
-        catch (e) {
-            crawlResult = "error";
-        }
-    }
-
-    return crawlResult;
+    return crawlResult + " .Đã fix: " + count_empty_chapters + " chap lỗi! ";
 
 }
 
@@ -599,7 +617,7 @@ var fetchManga = async function (mangaLink) {
 
     let manga;
     let number_chapters_of_manga;
-    let count_chapters = 0;
+    let count_empty_chapters = 0;
     try {
       manga = await Manga.findOne({title: title, link: mangaLink});
       number_chapters_of_manga = await Chapter.count({'manga.title': title}); //Đếm số chapters của Manga
@@ -641,8 +659,8 @@ var fetchManga = async function (mangaLink) {
                         chapterUpdate, manga._id, manga.title);
     });
 
-    count_chapters = count_chapters + await crawlChapter(manga._id); //Crawl chapter
-    if(count_chapters == number_chapters_of_manga) {
+    count_empty_chapters = count_empty_chapters + await crawlChapter(manga._id); //Crawl chapter
+    if(count_empty_chapters == number_chapters_of_manga) {
 
         Manga.update({title: title, link: mangaLink}, {crawlStatus: 'done'}, function(err) {
           if(!err) {
@@ -847,6 +865,26 @@ var saveChapter = async function(chapterCount, chapterUrl, chapterTitle,
   console.log(chapterTitle + " Saved!");
 }
 
+var saveChapter2 = async function(chapterCount, chapterUrl, chapterTitle,
+                chapterNumber, chapterUpdate, mangaId, mangaTitle) {
+
+  if(chapterCount < 1) { //Nếu chapter chưa được tạo thì tạo mới
+    let chapter = new Chapter({
+      link: chapterUrl,
+      title: chapterTitle,
+      number: chapterNumber,
+      update: chapterUpdate,
+      manga: {
+        id: mangaId,
+        title: mangaTitle
+      }
+    });
+
+    await chapter.save();
+    console.log(chapterTitle + " Saved!");
+  }
+}
+
 var crawlChapter = async function(mangaId) {
 
   let listChapters;
@@ -884,6 +922,94 @@ var crawlChapter = async function(mangaId) {
   return total_chapters;
 }
 
+var updateNewChapter = async function(mangaId, mangaLink) {
+  //Bóc tách thông tin
+  let $ = cheerio.load(await getRawBody(mangaLink));
+  let title = $('.title-detail').text();
+  let name = $('h2.other-name').text() || title;
+  let listAuthor = [];
+
+  $('li.author > p:nth-child(2) a').each(function(index) {
+      let author = $(this).text();
+      listAuthor.push(author);
+  });
+
+  let status = $('.status > p:nth-child(2)').text();
+  let update = $('time.small').text();
+      update = update.slice(update.indexOf("lúc:") + 4, update.length).trim();
+      update = update.replace(']','');
+  let tempUpdate = update;
+  let hour = update.slice(0,tempUpdate.indexOf(':')).trim();
+      hour = parseInt(hour);
+      tempUpdate = tempUpdate.slice(tempUpdate.indexOf(':') + 1, tempUpdate.length);
+  let minute = tempUpdate.slice(0, tempUpdate.indexOf(' '));
+      minute = parseInt(minute);
+
+      tempUpdate = tempUpdate.slice(tempUpdate.indexOf(' '), tempUpdate.length).trim(); //Ket qua duoc ngay thang nam
+      tempUpdate = tempUpdate.split('/');
+  let day = tempUpdate[0];
+      day = parseInt(day);
+  let month = tempUpdate[1];
+      month = parseInt(month);
+  let year = tempUpdate[2];
+      year = parseInt(year);
+  let updateISO = new Date(year, month - 1, day, hour, minute);
+
+  let view = $('.list-info > li:last-child > p:nth-child(2)').text();
+      view = view.replace('.','');
+      view = parseInt(view);
+  let cover = $('div.col-xs-4:nth-child(1) > img:nth-child(1)').attr('src');
+  let description = $('.detail-content > p:nth-child(2)').text();
+
+  let listCategory = [];
+
+  $('.kind > p:nth-child(2) > a').each(function(index) {
+    let category = $(this).text();
+      listCategory.push(category);
+  });
+  // !Kết thúc bóc tách thông tin
+
+  try {
+    await Manga.update({_id: mangaId}, { //Cập nhật thông tin cho manga
+      name: name,
+      author: listAuthor,
+      status: status,
+      update: update,
+      updateISO: updateISO,
+      view: view,
+      cover: cover,
+      category: listCategory,
+      description: description
+    });
+  }
+  catch(e) {
+    console.log(e);
+  }
+
+    //Lấy danh sách các Chapters và các thông tin về chapter
+    $('#nt_listchapter > nav:nth-child(2) > ul:nth-child(1) > li.row:not(.heading)').each(async function(index) {
+      let rowChapter = await $(this).html();
+      let $$ = cheerio.load(rowChapter);
+
+      let chapterUrl = $$('a').attr('href');
+      let chapterTitle = $$('a').text();
+      let chapterNumber = chapterTitle.slice(chapterTitle.indexOf("ter ") + 4, chapterTitle.length).trim();
+          chapterNumber = parseFloat(chapterNumber);
+      let chapterUpdate = $$('div:nth-child(2)').text().trim();
+      let chapterCount;
+      try {
+        chapterCount = await Chapter.count({title: chapterTitle});
+      }
+      catch(e) {
+        console.log(e);
+      }
+
+      await saveChapter2(chapterCount, chapterUrl, chapterTitle, chapterNumber,
+                          chapterUpdate, mangaId, title);
+
+    });
+}
+
 var fixCrawlChapter = async function(mangaId) {
 
   let listChapters;
@@ -919,6 +1045,24 @@ var fixCrawlChapter = async function(mangaId) {
 
   }
   return total_chapters;
+}
+
+var xoa_dau = function(str) {
+    str = str.replace(/à|á|ạ|ả|ã|â|ầ|ấ|ậ|ẩ|ẫ|ă|ằ|ắ|ặ|ẳ|ẵ/g, "a");
+    str = str.replace(/è|é|ẹ|ẻ|ẽ|ê|ề|ế|ệ|ể|ễ/g, "e");
+    str = str.replace(/ì|í|ị|ỉ|ĩ/g, "i");
+    str = str.replace(/ò|ó|ọ|ỏ|õ|ô|ồ|ố|ộ|ổ|ỗ|ơ|ờ|ớ|ợ|ở|ỡ/g, "o");
+    str = str.replace(/ù|ú|ụ|ủ|ũ|ư|ừ|ứ|ự|ử|ữ/g, "u");
+    str = str.replace(/ỳ|ý|ỵ|ỷ|ỹ/g, "y");
+    str = str.replace(/đ/g, "d");
+    str = str.replace(/À|Á|Ạ|Ả|Ã|Â|Ầ|Ấ|Ậ|Ẩ|Ẫ|Ă|Ằ|Ắ|Ặ|Ẳ|Ẵ/g, "A");
+    str = str.replace(/È|É|Ẹ|Ẻ|Ẽ|Ê|Ề|Ế|Ệ|Ể|Ễ/g, "E");
+    str = str.replace(/Ì|Í|Ị|Ỉ|Ĩ/g, "I");
+    str = str.replace(/Ò|Ó|Ọ|Ỏ|Õ|Ô|Ồ|Ố|Ộ|Ổ|Ỗ|Ơ|Ờ|Ớ|Ợ|Ở|Ỡ/g, "O");
+    str = str.replace(/Ù|Ú|Ụ|Ủ|Ũ|Ư|Ừ|Ứ|Ự|Ử|Ữ/g, "U");
+    str = str.replace(/Ỳ|Ý|Ỵ|Ỷ|Ỹ/g, "Y");
+    str = str.replace(/Đ/g, "D");
+    return str;
 }
 
 app.get('/crawl-manga',async function(req, res) {
@@ -1143,7 +1287,7 @@ app.get('/home', function(req, res) {
         res.render('index', {mangas: mangas});
       }
     });
-    
+
 });
 
 app.get('/manga-detail', function(req,res) {
@@ -1169,6 +1313,22 @@ app.post('/update-manga',async function(req, res) {
   console.log(result);
   res.json({result: result, message: "ok"});
 
+});
+
+app.get('/update-new-chapter', async function(req, res) {
+    let listManga;
+    try {
+      listManga = await Manga.find({crawlStatus: 'done'});
+    }
+    catch(e) {
+      console.log(e);
+    }
+
+    listManga.forEach(async function(manga) {
+        await updateNewChapter(manga._id, manga.link);
+    });
+
+    res.send("done");
 });
 
 app.get('/chapter-detail/:id', function(req, res) {
@@ -1287,24 +1447,11 @@ app.get('/chapter/:id', function(req, res) {
 });
 
 app.get('/test', async function(req,res) {
-    var link = 'http://www.nettruyen.com/truyen-tranh/yeu-than-ky/chap-192/408512';
-
-    let response;
-    try {
-      response = await getRawBody(link);
-    }
-    catch(e) {
-      console.log(e)
-    }
-
-    let $ = cheerio.load(response);
-
-    $('.page-chapter img').each(async function(index) {
-        let src = await $(this).attr('src');
-        console.log(src);
+    Manga.update({crawlStatus: 'error'}, {crawlStatus: 'done'}, function(err){
+        if(!err) {
+          res.send("ok");
+        }
     });
-
-    res.send($.html());
 });
 
 async function getRawBody(url) {
