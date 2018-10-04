@@ -4,7 +4,7 @@
 	<meta charset="utf-8">
 	<meta http-equiv="X-UA-Compatible" content="IE=edge">
 	<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-	<title>Limitless - Responsive Web Application Kit by Eugene Kopyov</title>
+	<title><%= chapters[0].manga.title %></title>
 
 	<!-- Global stylesheets -->
 	<link href="https://fonts.googleapis.com/css?family=Roboto:400,300,100,500,700,900" rel="stylesheet" type="text/css">
@@ -44,7 +44,7 @@
 			<div class="page-header page-header-light">
 				<div class="page-header-content header-elements-md-inline">
 					<div class="page-title d-flex">
-						<h4><i class="icon-arrow-left52 mr-2"></i> <span class="font-weight-semibold">Datatables</span> - Basic</h4>
+						<h4></i> <span class="font-weight-semibold"><%= chapters[0].manga.title %></span></h4>
 						<a href="#" class="header-elements-toggle text-default d-md-none"><i class="icon-more"></i></a>
 					</div>
 
@@ -61,7 +61,7 @@
 					<div class="d-flex">
 						<div class="breadcrumb">
 							<a href="index.html" class="breadcrumb-item"><i class="icon-home2 mr-2"></i> Home</a>
-							<a href="datatable_basic.html" class="breadcrumb-item">Datatables</a>
+							<a href="datatable_basic.html" class="breadcrumb-item"><%= chapters[0].manga.title %></a>
 							<span class="breadcrumb-item active">Basic</span>
 						</div>
 
@@ -102,7 +102,7 @@
 				<!-- Basic datatable -->
 				<div class="card">
 					<div class="card-header header-elements-inline">
-						<h5 class="card-title">Basic datatable</h5>
+						<h5 class="card-title"><%= chapters[0].manga.title %></h5>
 						<div class="header-elements">
 							<div class="list-icons">
 		                		<a class="list-icons-item" data-action="collapse"></a>
@@ -113,32 +113,24 @@
 					</div>
 
 					<div class="card-body">
-						The <code>DataTables</code>
+						
 					</div>
 
 					<table class="table datatable-basic">
 						<thead>
 							<tr>
-								<th>Cover</th>
 								<th>LINK</th>
-								<th>Danh sách Chapters</th>
 								<th>Cập Nhật</th>
-								<th>Status</th>
-								<th class="text-center">Hành Động</th>
+								<th class="text-center">Actions</th>
 							</tr>
 						</thead>
 						<tbody>
 
-							<% mangas.forEach(function(manga){%>
-
+							<% chapters.forEach(function(chapter){%>
+		
 	              				<tr>
-									<td>
-										<img src="<%= manga.cover %>" width="100px"/>
-									</td>
-									<td><a href="<%= manga.link %>"><%= manga.title %></a></td>
-									<td><a href="/manga-detail?mangaId=<%= manga._id %>">Xem Danh Sách</td>
-									<td><%= manga.update %></td>
-									<td><span class="badge badge-success"><%= manga.crawlStatus %></span></td>
+									<td><a href="/chapter-detail/<%= chapter._id %>"><%= chapter.title %></a></td>
+									<td><%= chapter.update %></td>
 									<td class="text-center">
 										<div class="list-icons">
 											<div class="dropdown">

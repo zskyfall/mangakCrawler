@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title><%= chapter.title %> - <%= chapter.manga.title %></title>
+</head>
+<body>
+
+	<% chapter.images.forEach(function(image) {%>
+
+		<img src="<%= image %>" height="100%" class="chapter_image"/>
+
+	<%});%>
+
+</body>
+<style type="text/css">
+	body {
+		background: #E9EBEE;
+	}
+	.chapter_image {
+		padding: 10px;
+		position: relative;
+	    top: 50%;
+	    left: 50%;
+	    transform: translate(-50%, -50%);
+	    -ms-transform: translate(-50%, -50%); /* IE 9 */
+	    -webkit-transform: translate(-50%, -50%);
+	}
+</style>
+</html>

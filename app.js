@@ -25,9 +25,9 @@ var mangaSchema = mongoose.Schema({
 	category: [],
 	status: String,
 	view: Number,
-  isCrawled: {
-    type: Boolean,
-    default: false
+  crawlStatus: {
+    type: String,
+    default: 'init'
   },
 	update: String,
   updateISO: Date,
@@ -304,7 +304,6 @@ app.get('/list-manga', async function(req, res) {
     res.send("done");
 });
 
-
 app.get('/fetch-list-manga',async function(req, res) {
   var url = 'http://www.nettruyen.com/hot?page=1';
 
@@ -381,7 +380,7 @@ app.get('/list-crawl/:number', async function(req, res) {
 
     console.log(number);
 
-    if(number < 3) {
+    if(number < 41) {
       Manga.paginate({}, { page: number, limit: 1, select: 'link' }, async function(err, result) {
             if(!err) {
                 let url = await result.docs[0].link;
@@ -458,9 +457,12 @@ var fetchManga = async function (mangaLink) {
   // !Kết thúc bóc tách thông tin
 
     let manga;
+    let number_chapters_of_manga;
+    let count_chapters = 0;
     try {
       manga = await Manga.findOne({title: title, link: mangaLink});
-      await Manga.update({title: title, link: mangaLink}, {
+      number_chapters_of_manga = await Chapter.count({'manga.title': title}); //Đếm số chapters của Manga
+      await Manga.update({title: title, link: mangaLink}, { //Cập nhật thông tin cho manga
         name: name,
         author: listAuthor,
         status: status,
@@ -498,7 +500,28 @@ var fetchManga = async function (mangaLink) {
                         chapterUpdate, manga._id, manga.title);
     });
 
-    await crawlChapter(manga._id); //Crawl chapter
+    count_chapters = count_chapters + await crawlChapter(manga._id); //Crawl chapter
+    if(count_chapters == number_chapters_of_manga) {
+
+        Manga.update({title: title, link: mangaLink}, {crawlStatus: 'done'}, function(err) {
+          if(!err) {
+              console.log("MANGA:"+ title +" DA DUOC CAP NHAT TOAN BO CHAPTER");
+          }
+          else {
+              console.log(err);
+          }
+        });
+    }
+    else {
+         Manga.update({title: title, link: mangaLink}, {crawlStatus: 'error'}, function(err) {
+          if(!err) {
+              console.log("XAY RA LOI KHI CRAWL CHAPTER CHO : "+ title);
+          }
+          else {
+              console.log(err);
+          }
+        });
+    }
 
 }
 
@@ -686,6 +709,7 @@ var saveChapter = async function(chapterCount, chapterUrl, chapterTitle,
 var crawlChapter = async function(mangaId) {
 
   let listChapters;
+  let total_chapters = 0;
   try {
     listChapters = await Chapter.find({'manga.id': mangaId});
   }
@@ -709,13 +733,14 @@ var crawlChapter = async function(mangaId) {
     try {
        await Chapter.updateOne({'manga.id': mangaId, title: chapter.title}, {images: images});
        console.log(chapter.title + " updated!");
+       total_chapters += 1;
     }
     catch(e) {
       console.log(e);
     }
 
   }
-  console.log("DA HOAN THANH!");
+  return total_chapters;
 }
 
 app.get('/crawl-manga',async function(req, res) {
@@ -930,25 +955,64 @@ app.get('/chap', function(req, res) {
 });
 
 app.get('/home', function(req, res) {
-    res.render('index');
+    let status = req.query.status || 'done';
+
+    Manga.find({crawlStatus: status}, function(err, mangas) {
+      if(err) {
+        res.json({error: err});
+      }
+      else {
+        res.render('index', {mangas: mangas});
+      }
+    });
+    
+});
+
+app.get('/manga-detail', function(req,res) {
+  let mangaId = req.query.mangaId;
+
+  Chapter.find({'manga.id': mangaId}).sort({number: -1}).exec(function(err, chapters) {
+
+      if(err) {
+        res.json({error: err});
+      }
+      else {
+        res.render('manga_chapters', {chapters: chapters});
+      }
+  });
+
+});
+
+app.get('/chapter-detail/:id', function(req, res) {
+  let id = req.params.id;
+
+  Chapter.findOne({_id: id}, function(err, chapter) {
+    if(err) {
+      res.json({error: err});
+    }
+    else {
+      res.render('chapter', {chapter: chapter});
+    }
+  });
 });
 
 app.get('/manga', function(req, res) {
     var category = req.query.category;
     var author = req.query.author;
 	  var type = req.query.type || 'view';
+    var status = req.query.status || 'done';
 
 	if(category != undefined && author != undefined) {
 
 	    if(type == 'new') {
-	    	Manga.find({category: category, author: author}).sort({updateISO: -1}).exec(function(err, mangas) {
+	    	Manga.find({category: category, author: author, crawlStatus: status}).sort({updateISO: -1}).exec(function(err, mangas) {
 		    	if(!err) {
 		    		res.json(mangas);
 		    	}
 		    });
 	    }
 	    else {
-	    	Manga.find({category: category, author: author}).sort({view: 1}).exec(function(err, mangas) {
+	    	Manga.find({category: category, author: author, crawlStatus: status}).sort({view: 1}).exec(function(err, mangas) {
 		    	if(!err) {
 		    		res.send(mangas);
 		    	}
@@ -958,14 +1022,14 @@ app.get('/manga', function(req, res) {
 	}
 	else if(category == undefined && author != undefined){
 		if(type == 'view') {
-			Manga.find({author: author}).sort({view: -1}).exec(function(err, mangas) {
+			Manga.find({author: author, crawlStatus: status}).sort({view: -1}).exec(function(err, mangas) {
 			    	if(!err) {
 			    		res.send(mangas);
 			    	}
 			});
 		}
 		else {
-			Manga.find({author: author}).sort({updateISO: -1}).exec(function(err, mangas) {
+			Manga.find({author: author, crawlStatus: status}).sort({updateISO: -1}).exec(function(err, mangas) {
 			    	if(!err) {
 			    		res.send(mangas);
 			    	}
@@ -974,14 +1038,14 @@ app.get('/manga', function(req, res) {
 	}
 	else if(category != undefined && author == undefined){
 		if(type == 'view') {
-			Manga.find({category: category}).sort({view: -1}).exec(function(err, mangas) {
+			Manga.find({category: category, crawlStatus: status}).sort({view: -1}).exec(function(err, mangas) {
 			    	if(!err) {
 			    		res.send(mangas);
 			    	}
 			});
 		}
 		else {
-			Manga.find({category: category}).sort({updateISO: -1}).exec(function(err, mangas) {
+			Manga.find({category: category, crawlStatus: status}).sort({updateISO: -1}).exec(function(err, mangas) {
 			    	if(!err) {
 			    		res.send(mangas);
 			    	}
@@ -990,14 +1054,14 @@ app.get('/manga', function(req, res) {
 	}
 	else {
 		if(type == 'view') {
-			Manga.find({}).sort({view: -1}).exec(function(err, mangas) {
+			Manga.find({crawlStatus: status}).sort({view: -1}).exec(function(err, mangas) {
 			    	if(!err) {
 			    		res.send(mangas);
 			    	}
 			});
 		}
 		else {
-			Manga.find({}).sort({updateISO: -1}).exec(function(err, mangas) {
+			Manga.find({crawlStatus: status}).sort({updateISO: -1}).exec(function(err, mangas) {
 			    	if(!err) {
 			    		res.send(mangas);
 			    	}
