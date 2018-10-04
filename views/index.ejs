@@ -147,9 +147,8 @@
 												</a>
 
 												<div class="dropdown-menu dropdown-menu-right">
-													<a href="#" class="dropdown-item"><i class="icon-file-pdf"></i> Export to .pdf</a>
-													<a href="#" class="dropdown-item"><i class="icon-file-excel"></i> Export to .csv</a>
-													<a href="#" class="dropdown-item"><i class="icon-file-word"></i> Export to .doc</a>
+													<a href="#" id="<%= manga._id %>" link="<%= manga.link %>" class="dropdown-item update_manga"></i> Cập Nhật</a>
+													<a href="#" class="dropdown-item"></i> Xóa</a>
 												</div>
 											</div>
 										</div>
@@ -172,7 +171,75 @@
 		<!-- /main content -->
 
 	</div>
+
+	<button type="button" class="btn btn-info btn-lg" data-toggle="modal" data-target="#myModal">Open Modal</button>
+
+  <!-- Modal -->
+  <div class="modal fade" id="myModal" role="dialog">
+    <div class="modal-dialog">
+          	<div class="loader"></div>
+    </div>
+  </div>
 	<!-- /page content -->
 
 </body>
+
+<script type="text/javascript">
+	
+	$('a.update_manga').click(function(e){
+		e.preventDefault();
+		$('#myModal').modal('toggle');
+		var id = $(this).attr('id');
+		var link = $(this).attr('link');
+
+        $.ajax({
+            url: '/update-manga',
+            type: 'POST',
+            dataType: 'json',
+            data: {
+               link: link,
+               id: id
+            }
+        }).done(function(ketqua) {
+        	console.log(ketqua);
+        	$('#myModal').modal('toggle');
+            alert(ketqua.result);
+        }).success(function(result) {
+        	console.log(result);
+        	$('#myModal').modal('toggle');
+        	alert(result.result);
+        });
+        ;
+
+	});
+
+</script>
+<style type="text/css">
+	.loader {
+	  border: 16px solid #f3f3f3;
+	  border-radius: 50%;
+	  border-top: 16px solid blue;
+	  border-bottom: 16px solid blue;
+	  width: 100px;
+	  height: 100px;
+	  -webkit-animation: spin 1s linear infinite;
+	  animation: spin 1s linear infinite;
+	  position: relative;
+	    top: 50%;
+	    left: 50%;
+	    transform: translate(-50%, -50%);
+	    -ms-transform: translate(-50%, -50%); /* IE 9 */
+	    -webkit-transform: translate(-50%, -50%);
+	}
+
+	@-webkit-keyframes spin {
+	  0% { -webkit-transform: rotate(0deg); }
+	  100% { -webkit-transform: rotate(360deg); }
+	}
+
+	@keyframes spin {
+	  0% { transform: rotate(0deg); }
+	  100% { transform: rotate(360deg); }
+	}
+</style>
 </html>

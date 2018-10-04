@@ -406,6 +406,129 @@ app.get('/list-crawl/:number', async function(req, res) {
     //res.send(list);
 });
 
+var updateManga = async function (mangaLink, mangaId) {
+  console.log("Crawling : " + mangaLink + "...");
+  let crawlResult;
+  //Bóc tách thông tin
+  let $ = cheerio.load(await getRawBody(mangaLink));
+  let title = $('.title-detail').text();
+  let name = $('h2.other-name').text() || title;
+  let listAuthor = [];
+
+  $('li.author > p:nth-child(2) a').each(function(index) {
+      let author = $(this).text();
+      listAuthor.push(author);
+  });
+
+  let status = $('.status > p:nth-child(2)').text();
+  let update = $('time.small').text();
+      update = update.slice(update.indexOf("lúc:") + 4, update.length).trim();
+      update = update.replace(']','');
+  let tempUpdate = update;
+  let hour = update.slice(0,tempUpdate.indexOf(':')).trim();
+      hour = parseInt(hour);
+      tempUpdate = tempUpdate.slice(tempUpdate.indexOf(':') + 1, tempUpdate.length);
+  let minute = tempUpdate.slice(0, tempUpdate.indexOf(' '));
+      minute = parseInt(minute);
+
+      tempUpdate = tempUpdate.slice(tempUpdate.indexOf(' '), tempUpdate.length).trim(); //Ket qua duoc ngay thang nam
+      tempUpdate = tempUpdate.split('/');
+  let day = tempUpdate[0];
+      day = parseInt(day);
+  let month = tempUpdate[1];
+      month = parseInt(month);
+  let year = tempUpdate[2];
+      year = parseInt(year);
+  let updateISO = new Date(year, month - 1, day, hour, minute);
+
+  let view = $('.list-info > li:last-child > p:nth-child(2)').text();
+  console.log(view);
+      view = view.replace('.','');
+      view = parseInt(view);
+  let cover = $('div.col-xs-4:nth-child(1) > img:nth-child(1)').attr('src');
+  let description = $('.detail-content > p:nth-child(2)').text();
+
+  let listCategory = [];
+
+  $('.kind > p:nth-child(2) > a').each(function(index) {
+    let category = $(this).text();
+      listCategory.push(category);
+  });
+  // !Kết thúc bóc tách thông tin
+
+    let manga;
+    let number_chapters_of_manga;
+    let count_chapters = 0;
+    try {
+      manga = await Manga.findOne({_id: mangaId});
+      number_chapters_of_manga = await Chapter.count({'manga.title': title}); //Đếm số chapters của Manga
+      await Manga.update({_id: mangaId}, { //Cập nhật thông tin cho manga
+        name: name,
+        author: listAuthor,
+        status: status,
+        title: title,
+        update: update,
+        updateISO: updateISO,
+        view: view,
+        cover: cover,
+        category: listCategory,
+        description: description
+      });
+    }
+    catch(e) {
+      console.log(e);
+    }
+
+    //Lấy danh sách các Chapters và các thông tin về chapter
+    $('#nt_listchapter > nav:nth-child(2) > ul:nth-child(1) > li.row:not(.heading)').each(async function(index) {
+      let rowChapter = await $(this).html();
+      let $$ = cheerio.load(rowChapter);
+
+      let chapterUrl = $$('a').attr('href');
+      let chapterTitle = $$('a').text();
+      let chapterNumber = chapterTitle.slice(chapterTitle.indexOf("ter ") + 4, chapterTitle.length).trim();
+          chapterNumber = parseFloat(chapterNumber);
+      let chapterUpdate = $$('div:nth-child(2)').text().trim();
+      let chapterCount;
+      try {
+        chapterCount = await Chapter.count({'manga.id': manga._id, number: chapterNumber});
+      }
+      catch(e) {
+        console.log(e);
+      }
+
+      await saveChapter(chapterCount, chapterUrl, chapterTitle, chapterNumber,
+                        chapterUpdate, manga._id, manga.title);
+    });
+
+    count_chapters = count_chapters + await fixCrawlChapter(manga._id); //Crawl chapter
+    if(count_chapters == number_chapters_of_manga) {
+
+        try {
+           await Manga.update({title: title, link: mangaLink}, {crawlStatus: 'done'});
+           crawlResult = "success";
+           console.log("MANGA:"+ title +" DA DUOC CAP NHAT TOAN BO CHAPTER");
+        }
+        catch (e) {
+            crawlResult = "error";
+        }
+    }
+    else {
+
+        try {
+           await Manga.update({title: title, link: mangaLink}, {crawlStatus: 'error'});
+           crawlResult = "lost";
+           console.log("XAY RA LOI KHI CRAWL CHAPTER CHO : "+ title);
+        }
+        catch (e) {
+            crawlResult = "error";
+        }
+    }
+
+    return crawlResult;
+
+}
+
 var fetchManga = async function (mangaLink) {
   console.log("Crawling : " + mangaLink + "...");
 
@@ -611,7 +734,7 @@ var crawlManga = async function (mangaLink) {
         console.log(e);
       }
 
-      // await saveChapter(chapterCount, chapterUrl, chapterTitle, chapterNumber,
+      // await up(chapterCount, chapterUrl, chapterTitle, chapterNumber,
       //                   chapterUpdate, manga._id, manga.title);
       if(chapterCount < 1) {
           let newChapter = new Chapter({
@@ -712,6 +835,43 @@ var crawlChapter = async function(mangaId) {
   let total_chapters = 0;
   try {
     listChapters = await Chapter.find({'manga.id': mangaId});
+  }
+  catch(e) {
+    console.log(e);
+  }
+
+  for(var i = 0; i < listChapters.length; i++) {
+    let chapter = listChapters[i];
+    let images = [];
+
+    let bodyChapter = await getRawBody(chapter.link);
+    let $ = cheerio.load(bodyChapter);
+
+    $('.page-chapter img').each(async function(index) {
+        //let src = await $(this).attr('src');
+        images.push($(this).attr('src'));
+        //console.log(src);
+    });
+
+    try {
+       await Chapter.updateOne({'manga.id': mangaId, title: chapter.title}, {images: images});
+       console.log(chapter.title + " updated!");
+       total_chapters += 1;
+    }
+    catch(e) {
+      console.log(e);
+    }
+
+  }
+  return total_chapters;
+}
+
+var fixCrawlChapter = async function(mangaId) {
+
+  let listChapters;
+  let total_chapters = 0;
+  try {
+    listChapters = await Chapter.find({'manga.id': mangaId, images: []});
   }
   catch(e) {
     console.log(e);
@@ -980,6 +1140,16 @@ app.get('/manga-detail', function(req,res) {
         res.render('manga_chapters', {chapters: chapters});
       }
   });
+
+});
+
+app.post('/update-manga',async function(req, res) {
+  var id = req.body.id;
+  var link = req.body.link;
+
+  let result =  await updateManga(link, id);
+  console.log(result);
+  res.json({result: result, message: "ok"});
 
 });
 
