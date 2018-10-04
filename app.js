@@ -48,6 +48,7 @@ var chapterSchema = mongoose.Schema({
 	}
 });
 
+mangaSchema.index({title: 'text'});
 mangaSchema.plugin(mongoosePaginate);
 
 var Manga = mongoose.model('Manga', mangaSchema);
@@ -404,6 +405,23 @@ app.get('/list-crawl/:number', async function(req, res) {
       res.send("qua gioi han");
     }
     //res.send(list);
+});
+
+
+app.get('/search/:text', function(req, res) {
+    let query = req.params.text;
+    Manga.find({
+        $text: {$search: query}
+    })
+   .limit(20)
+   .exec(function(err, docs) {
+      if(err) {
+        res.json({error: err});
+      }
+      else {
+        res.json(docs);
+      }
+    });
 });
 
 var updateManga = async function (mangaLink, mangaId) {
